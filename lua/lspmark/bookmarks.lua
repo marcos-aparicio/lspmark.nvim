@@ -451,7 +451,7 @@ function M.lsp_calibrate_bookmarks(bufnr, async, bookmark_file)
 		if not request then
 			helper({})
 		else
-			local result, err = vim.lsp.buf_request_sync(bufnr, "textDocument/documentSymbol", params, 1000)
+			local result, err = vim.lsp.buf_request_sync(bufnr, "textDocument/documentSymbol", params, 500)
 			if err then
 				helper({})
 				return
@@ -647,7 +647,7 @@ function M.toggle_bookmark(opts)
 		if with_comment then
 			modify_comment(id)
 		end
-		M.lsp_calibrate_bookmarks(nil, true, M.bookmark_file)
+		M.lsp_calibrate_bookmarks(nil, false, M.bookmark_file)
 	end
 end
 
@@ -663,7 +663,7 @@ function M.modify_comment()
 		print("Couldn't find a bookmark under the cursor.")
 	end
 
-	M.lsp_calibrate_bookmarks(nil, true, M.bookmark_file)
+	M.lsp_calibrate_bookmarks(nil, false, M.bookmark_file)
 end
 
 function M.show_comment()
@@ -689,10 +689,6 @@ local function on_dir_changed_pre()
 	M.save_bookmarks()
 end
 
-local function on_lsp_attach(event)
-	M.lsp_calibrate_bookmarks(event.buf, true, M.bookmark_file)
-end
-
 local function on_buf_enter(event)
 	-- The reason why we calibrate the bookmarks after entering rather than before leaving
 	-- a buffer is that we don't want to get the modified but not saved file calibrated too early,
@@ -707,7 +703,7 @@ local function on_buf_enter(event)
 end
 
 local function on_buf_write_post(event)
-	M.lsp_calibrate_bookmarks(event.buf, true, M.bookmark_file)
+	M.lsp_calibrate_bookmarks(event.buf, false, M.bookmark_file)
 end
 
 function M.load_bookmarks(dir)
@@ -783,7 +779,7 @@ function M.paste_text()
 				sign_info[tostring(id)] = mark.comment
 			end
 
-			M.lsp_calibrate_bookmarks(bufnr, true, M.bookmark_file)
+			M.lsp_calibrate_bookmarks(bufnr, false, M.bookmark_file)
 		end
 	else
 		-- From yy or (v -> select -> y)
@@ -815,10 +811,6 @@ end
 function M.setup()
 	vim.api.nvim_create_autocmd({ "DirChangedPre" }, {
 		callback = on_dir_changed_pre,
-		pattern = { "*" },
-	})
-	vim.api.nvim_create_autocmd({ "LspAttach" }, {
-		callback = on_lsp_attach,
 		pattern = { "*" },
 	})
 	vim.api.nvim_create_autocmd({ "BufEnter" }, {
