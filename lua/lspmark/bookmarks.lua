@@ -473,6 +473,168 @@ function M.lsp_calibrate_bookmarks(bufnr, async, bookmark_file)
 	end
 end
 
+-- Relocate bookmarks based on LSP symbols after external file changes
+function M.relocate_bookmarks_by_lsp(bufnr)
+	if bufnr == nil or bufnr == 0 then
+		bufnr = vim.api.nvim_get_current_buf()
+	end
+
+	local file_name = utils.standarize_path(vim.api.nvim_buf_get_name(bufnr))
+	if not M.bookmarks[file_name] then
+		return
+	end
+
+	local function relocate_helper(lsp_symbols)
+		-- Clear all existing signs first
+		vim.fn.sign_unplace(icon_group, { buffer = bufnr })
+		vim.api.nvim_buf_clear_namespace(bufnr, ns_id, 0, -1)
+
+		for kind, kind_symbols in pairs(M.bookmarks[file_name]) do
+			if kind ~= M.plain_magic then
+				for name, name_symbols in pairs(kind_symbols) do
+					-- Find matching LSP symbols by kind and name
+					local matching_symbols = {}
+					for _, symbol in ipairs(lsp_symbols) do
+						if symbol.name == name and tostring(symbol.kind) == kind then
+							table.insert(matching_symbols, symbol)
+						end
+					end
+
+					if not vim.tbl_isempty(matching_symbols) then
+						-- For each offset group, find best matching symbol
+						for offset, marks in pairs(name_symbols) do
+							for i = #marks, 1, -1 do
+								local mark = marks[i]
+
+								-- Find best matching symbol based on symbol_text and details
+								local best_symbol = nil
+								local best_score = math.huge
+
+								for _, symbol in ipairs(matching_symbols) do
+									local r = ensure_lsp_symbol_range(symbol)
+									local current_symbol_text = utils.remove_blanks(
+										table.concat(
+											utils.get_text(
+												r.start.line + 1,
+												r["end"].line + 1,
+												r.start.character,
+												r["end"].character,
+												bufnr
+											),
+											""
+										)
+									)
+
+									-- Calculate similarity score
+									local text_score = utils.levenshtein(mark.symbol_text or "", current_symbol_text)
+									local details_score = 0
+									if mark.details and symbol.details then
+										details_score = utils.levenshtein(mark.details, symbol.details)
+									end
+
+									local total_score = text_score + (details_score * 0.1) -- Weight details less
+
+									if total_score < best_score then
+										best_score = total_score
+										best_symbol = symbol
+									end
+								end
+
+								if best_symbol then
+									local r = best_symbol.range
+									-- Check if the original offset is still valid
+									local max_offset = r["end"].line - r.start.line
+									local new_offset = math.min(tonumber(offset), max_offset)
+
+									-- Update mark with new information
+									mark.range = {
+										r.start.line,
+										r["end"].line,
+										r.start.character,
+										r["end"].character,
+									}
+									mark.details = best_symbol.details
+									mark.symbol_text = utils.remove_blanks(
+										table.concat(
+											utils.get_text(
+												r.start.line + 1,
+												r["end"].line + 1,
+												r.start.character,
+												r["end"].character,
+												bufnr
+											),
+											""
+										)
+									)
+
+									-- Update line text
+									local new_line = r.start.line + new_offset + 1
+									if new_line <= vim.api.nvim_buf_line_count(bufnr) then
+										mark.text = vim.api.nvim_buf_get_lines(bufnr, new_line - 1, new_line, false)[1]
+											or ""
+									end
+
+									-- If offset changed, move the mark to correct offset group
+									if new_offset ~= tonumber(offset) then
+										table.remove(marks, i)
+										local new_l3 =
+											ensure_path_valid(file_name, best_symbol.kind, best_symbol.name, new_offset)
+										table.insert(new_l3[tostring(new_offset)], mark)
+									end
+								else
+									-- No matching symbol found, remove the mark
+									table.remove(marks, i)
+								end
+							end
+						end
+					else
+						-- No matching symbols, remove all marks for this name
+						kind_symbols[name] = nil
+					end
+				end
+			end
+		end
+
+		-- Clean up empty tables and display updated bookmarks
+		utils.clear_empty_tables(M.bookmarks)
+		M.display_bookmarks(bufnr)
+		M.save_bookmarks(M.bookmark_file)
+	end
+
+	-- Get LSP symbols
+	local clients = vim.lsp.get_clients({ bufnr = bufnr })
+	local request = false
+	local params
+
+	for _, client in ipairs(clients) do
+		if client.server_capabilities.documentFormattingProvider then
+			request = true
+			params = vim.lsp.util.make_position_params(0, client.offset_encoding)
+			break
+		end
+	end
+
+	if not request or vim.tbl_isempty(clients) then
+		-- No LSP available, keep plain marks only
+		relocate_helper({})
+		return
+	end
+
+	-- Request symbols synchronously for immediate relocation
+	local result, err = vim.lsp.buf_request_sync(bufnr, "textDocument/documentSymbol", params, 1000)
+	if err or not result or vim.tbl_isempty(result) then
+		relocate_helper({})
+		return
+	end
+
+	for _, response in pairs(result) do
+		if response.result ~= nil then
+			relocate_helper(response.result)
+			return
+		end
+	end
+end
+
 local function get_mark_from_id(id)
 	local file_name = utils.standarize_path(vim.api.nvim_buf_get_name(0))
 	if M.bookmarks[file_name] ~= nil then
@@ -819,6 +981,15 @@ function M.setup()
 	})
 	vim.api.nvim_create_autocmd({ "BufWritePost" }, {
 		callback = on_buf_write_post,
+		pattern = { "*" },
+	})
+	vim.api.nvim_create_autocmd({ "BufReadPost" }, {
+		callback = function(event)
+			-- Handle external file changes by relocating bookmarks via LSP
+			vim.schedule(function()
+				M.relocate_bookmarks_by_lsp(event.buf)
+			end)
+		end,
 		pattern = { "*" },
 	})
 	-- d$, ciw, diw etc., will all be affected, not just yanking.
