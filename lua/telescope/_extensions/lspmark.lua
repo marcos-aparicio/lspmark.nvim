@@ -131,7 +131,7 @@ function M.lspmark(opts)
 					end
 					actions.close(prompt_bufnr)
 					local nr = vim.fn.bufnr(selection.filename, true)
-					vim.api.nvim_buf_set_option(nr, "buflisted", true)
+					vim.api.nvim_set_option_value("buflisted", true, { buf = nr })
 					vim.api.nvim_set_current_buf(nr)
 					vim.api.nvim_win_set_cursor(0, { selection.lnum, selection.col })
 				end)
