@@ -9,6 +9,7 @@ M.yanked = false
 M.marks_in_selection = {}
 M.mode = "c"
 M.plain_magic = "Plain"
+M.buffer_mtimes = {}
 local sign_info = {}
 local icon_group = "lspmark"
 local sign_name = "lspmark_symbol"
@@ -485,6 +486,10 @@ function M.relocate_bookmarks_by_lsp(bufnr)
 	end
 
 	local function relocate_helper(lsp_symbols)
+    -- If no LSP symbols, do not modify bookmarks (avoid accidental deletion)
+    if not lsp_symbols or vim.tbl_isempty(lsp_symbols) then
+      return
+    end
 		-- Clear all existing signs first
 		vim.fn.sign_unplace(icon_group, { buffer = bufnr })
 		vim.api.nvim_buf_clear_namespace(bufnr, ns_id, 0, -1)
@@ -870,6 +875,7 @@ end
 
 function M.load_bookmarks(dir)
 	M.bookmarks, M.bookmark_file = persistence.load(dir)
+  M.buffer_mtimes = {}
 end
 
 function M.save_bookmarks(bookmark_file)
@@ -985,9 +991,40 @@ function M.setup()
 	})
 	vim.api.nvim_create_autocmd({ "BufReadPost" }, {
 		callback = function(event)
-			-- Handle external file changes by relocating bookmarks via LSP
+			-- Only relocate bookmarks if the buffer was actually read from disk
+			-- and not just entered/focused
+			local bufnr = event.buf
+			local file_name = utils.standarize_path(vim.api.nvim_buf_get_name(bufnr))
+
+			-- Return early if no bookmarks or buffer is readonly
+			if not M.bookmarks[file_name] or vim.api.nvim_get_option_value("readonly", { buf = bufnr }) then
+				return
+			end
+
+			local stat = vim.loop.fs_stat(vim.api.nvim_buf_get_name(bufnr))
+			if not stat then
+				return
+			end
+
+			-- Store last modification time per buffer to detect external changes
+			M.buffer_mtimes = M.buffer_mtimes or {}
+			local current_mtime = stat.mtime.sec
+			local stored_mtime = M.buffer_mtimes[file_name]
+
+
+			-- On first open, just record mtime and do nothing
+			if not stored_mtime then
+				M.buffer_mtimes[file_name] = current_mtime
+				return
+			end
+
+			if stored_mtime and current_mtime <= stored_mtime then
+				return
+			end
+
+			M.buffer_mtimes[file_name] = current_mtime
 			vim.schedule(function()
-				M.relocate_bookmarks_by_lsp(event.buf)
+				M.relocate_bookmarks_by_lsp(bufnr)
 			end)
 		end,
 		pattern = { "*" },
