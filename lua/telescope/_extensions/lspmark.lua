@@ -16,12 +16,17 @@ function M.lspmark(opts)
 	local protocol = vim.lsp.protocol
 
 	local bufnr = vim.api.nvim_get_current_buf()
+	local current_file = vim.api.nvim_buf_get_name(bufnr)
+
 	if vim.api.nvim_get_option_value("modified", { buf = bufnr }) then
 		bookmarks.lsp_calibrate_bookmarks(bufnr, false, bookmarks.bookmark_file)
 	end
 
+	-- local max_file_name_len, max_kind_len, max_symbol_len, max_line_len, max_comment_len = 0, 0, 0, 0, 0
 	local max_file_name_len, max_kind_len, max_symbol_len, max_line_len, max_comment_len = 0, 0, 0, 0, 0
-	for file_name, kinds in pairs(bookmarks.bookmarks) do
+	local bookmarks_to_process = opts.current_file_only and {[current_file] = bookmarks.bookmarks[current_file]} or bookmarks.bookmarks
+
+	for file_name, kinds in pairs(bookmarks_to_process) do
 		max_file_name_len = math.max(string.len(utils.get_file_name(file_name)), max_file_name_len)
 		for kind, name_symbols in pairs(kinds) do
 			if kind == bookmarks.plain_magic then
