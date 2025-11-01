@@ -14,6 +14,10 @@ function M.lspmark(opts)
 	opts = opts or {}
 	local results = {}
 	local protocol = vim.lsp.protocol
+	local themes = require("telescope.themes")
+	if opts.theme then
+		opts = themes["get_" .. opts.theme](opts)
+	end
 
 	local bufnr = vim.api.nvim_get_current_buf()
 	local current_file = vim.api.nvim_buf_get_name(bufnr)
