@@ -104,11 +104,11 @@ function M.lspmark(opts)
 					return {
 						display = function()
 							return display({
+								{ entry.comment },
 								{ file_name },
 								{ entry.kind_str, entry.kind_hl_group },
 								{ entry.symbol },
 								{ entry.text },
-								{ entry.comment },
 							})
 						end,
 						ordinal = entry.comment .. entry.text .. entry.symbol .. entry.kind_str .. file_name,
